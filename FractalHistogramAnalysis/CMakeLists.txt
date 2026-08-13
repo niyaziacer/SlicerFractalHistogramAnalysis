@@ -6,6 +6,7 @@ set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
   fractal_histogram_core.py
   volbrain_labels.py
+  openmap_labels.py
 )
 
 set(MODULE_PYTHON_RESOURCES

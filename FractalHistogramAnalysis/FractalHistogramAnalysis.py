@@ -88,6 +88,18 @@ class FractalHistogramAnalysisWidget(ScriptedLoadableModuleWidget, VTKObservatio
         self.segmentSelector.setToolTip("Segment (region) to analyze. Only one segment is processed per click of Calculate.")
         inputsFormLayout.addRow("Segment: ", self.segmentSelector)
 
+        self.labelSchemeSelector = qt.QComboBox()
+        self.labelSchemeSelector.addItem("Auto (filename-based only)", None)
+        self.labelSchemeSelector.addItem("volBrain (native_structures)", "volbrain")
+        self.labelSchemeSelector.addItem("OpenMAP-T1 (Type1 Level5, 280 regions)", "openmapt1")
+        self.labelSchemeSelector.setToolTip(
+            "How to resolve segment names into real structure names/hemispheres. Matters "
+            "specifically for segments auto-named 'Segment_<N>' by Slicer (when a multi-label "
+            "volume is imported without a color table): the SAME number N means a DIFFERENT "
+            "region in volBrain vs. OpenMAP-T1, so pick the scheme matching your data source. "
+            "'Auto' skips label-table lookup and only parses names like 'right_amygdala.nii'.")
+        inputsFormLayout.addRow("Label scheme: ", self.labelSchemeSelector)
+
         self.t1Selector = slicer.qMRMLNodeComboBox()
         self.t1Selector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
         self.t1Selector.selectNodeUponCreation = False
@@ -189,6 +201,7 @@ class FractalHistogramAnalysisWidget(ScriptedLoadableModuleWidget, VTKObservatio
 
         # --- Connections ---
         self.segmentationSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onSegmentationNodeChanged)
+        self.labelSchemeSelector.connect("currentIndexChanged(int)", self.onSegmentationNodeChanged)
         self.calculateButton.connect("clicked(bool)", self.onCalculateButton)
         self.selectAllButton.connect("clicked(bool)", self.onSelectAll)
         self.clearSelectionButton.connect("clicked(bool)", self.onClearSelection)
@@ -219,7 +232,7 @@ class FractalHistogramAnalysisWidget(ScriptedLoadableModuleWidget, VTKObservatio
             segmentName = segment.GetName()
             self._segmentRawNames[segmentId] = segmentName
 
-            displayName = self._friendlyDisplayName(segmentName)
+            displayName = self._friendlyDisplayName(segmentName, self.currentLabelScheme())
             self.segmentSelector.addItem(displayName, segmentId)
 
             item = qt.QListWidgetItem(displayName)
@@ -231,15 +244,21 @@ class FractalHistogramAnalysisWidget(ScriptedLoadableModuleWidget, VTKObservatio
         self.calculateButton.enabled = self.segmentSelector.count > 0
         self.batchCalculateButton.enabled = self.segmentListWidget.count > 0
 
+    def currentLabelScheme(self):
+        """None, 'volbrain', or 'openmapt1' - whichever is selected in the
+        Label scheme dropdown."""
+        return self.labelSchemeSelector.itemData(self.labelSchemeSelector.currentIndex)
+
     @staticmethod
-    def _friendlyDisplayName(rawSegmentName):
+    def _friendlyDisplayName(rawSegmentName, labelScheme):
         """Build a UI display string like 'Hippocampus (Right)  [Segment_47]' from
-        the raw Slicer segment name, using the same resolution logic (volBrain
-        table, or generic filename parsing) used for the actual results. The
-        raw name in brackets is kept visible so it's traceable/debuggable, and
-        because it is the string that actually gets passed to parse_roi_info()
-        again downstream - the display text itself is never used for that."""
-        roi, hemi = core.parse_roi_info(rawSegmentName)
+        the raw Slicer segment name, using the same resolution logic (selected
+        label scheme, or generic filename parsing) used for the actual results.
+        The raw name in brackets is kept visible so it's traceable/debuggable,
+        and because it is the string that actually gets passed to
+        parse_roi_info() again downstream - the display text itself is never
+        used for that."""
+        roi, hemi = core.parse_roi_info(rawSegmentName, labelScheme)
         return f"{roi} ({hemi})  [{rawSegmentName}]"
 
     def onCalculateButton(self):
@@ -253,7 +272,8 @@ class FractalHistogramAnalysisWidget(ScriptedLoadableModuleWidget, VTKObservatio
         self.statusLabel.text = f"Calculating for '{segmentName}'..."
         slicer.app.processEvents()
         try:
-            result = self.logic.run(self._segmentationNode, segmentId, segmentName, t1Node, outputDir)
+            result = self.logic.run(self._segmentationNode, segmentId, segmentName, t1Node, outputDir,
+                                     labelScheme=self.currentLabelScheme())
         except Exception as e:
             logging.error(f"FractalHistogramAnalysis calculation failed: {e}")
             self.statusLabel.text = f"Error: {e}"
@@ -344,7 +364,7 @@ class FractalHistogramAnalysisWidget(ScriptedLoadableModuleWidget, VTKObservatio
             slicer.app.processEvents()
             try:
                 result = self.logic.run(self._segmentationNode, segmentId, segmentName, t1Node, outputDir,
-                                         computeFull=False)
+                                         computeFull=False, labelScheme=self.currentLabelScheme())
                 self._addResultRow(result)
             except Exception as e:
                 logging.error(f"Batch calculation failed for '{segmentName}': {e}")
@@ -411,16 +431,22 @@ class FractalHistogramAnalysisLogic(ScriptedLoadableModuleLogic):
                 return True
             return False
 
-    def run(self, segmentationNode, segmentId, segmentName, t1Node, outputDir, computeFull=True):
+    def run(self, segmentationNode, segmentId, segmentName, t1Node, outputDir, computeFull=True, labelScheme=None):
         """Compute fractal dimension (+ histogram if t1Node is given) for one segment.
         Returns a result dict; if outputDir is given, also appends to CSV files and
         saves PNG plots there, matching the CLI tool's output format.
 
         computeFull=False skips the full-image FD variants (used by batch mode for
         speed - see the note on core.compute_fractal_dimensions). The single-segment
-        Calculate button always uses the default computeFull=True."""
+        Calculate button always uses the default computeFull=True.
 
-        roi_name, hemisphere = core.parse_roi_info(segmentName)
+        labelScheme: None, "volbrain", or "openmapt1" - which atlas label table to
+        use for resolving 'Segment_<N>' names into real structure names/hemispheres.
+        Must match whatever produced segmentationNode's segments (see the Label
+        scheme dropdown in the widget) - the same N means a different region in
+        each scheme."""
+
+        roi_name, hemisphere = core.parse_roi_info(segmentName, labelScheme)
 
         if t1Node is not None:
             maskArray = slicer.util.arrayFromSegmentBinaryLabelmap(segmentationNode, segmentId, t1Node)

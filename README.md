@@ -61,16 +61,30 @@ Selected**. To keep this fast, batch mode computes only the bbox-based FD
 variants (`FD_bbox_boundary`, `FD_bbox_volume`) - not the full-image
 variants, which would rescan the whole volume for every single region.
 
-### Automatic VolBrain structure names
-When a `native_structures*.nii.gz` multi-label volume is imported into
-Slicer without a color table, Slicer names each segment `Segment_<N>`,
-where `N` is the original volBrain label value (e.g. `Segment_47`). This
-extension recognizes that pattern and automatically resolves it to the
-real structure name and hemisphere (e.g. "Hippocampus (Right)") using
-volBrain's own label table, both in the segment list and in the results.
-Segments named some other way (e.g. the CLI tool's manual one-file-per-
-region workflow, `right_amygdala.nii`) still get parsed by the generic
-filename-based logic instead.
+### Automatic structure names (volBrain and OpenMAP-T1)
+When a multi-label parcellation volume is imported into Slicer without a
+color table, Slicer names each segment `Segment_<N>`, where `N` is the
+original integer label value (e.g. `Segment_47`). This extension can
+resolve that back to the real structure name and hemisphere - but which
+table to use must be picked explicitly with the **Label scheme** dropdown:
+
+- **volBrain (native_structures)**: volBrain's own label table (e.g.
+  `Segment_47` -> "Hippocampus (Right)").
+- **OpenMAP-T1 (Type1 Level5, 280 regions)**: OpenMAP-T1's JHU-atlas-based
+  Type1 Level5 table (e.g. `Segment_75` -> "Hippo (Left)"). Also directly
+  recognizes segments already renamed to their abbreviation (e.g. `Hippo_L`,
+  `SFG_PFC_R`), which is what pipelines like
+  [SlicerOpenMAPT1Auto](https://github.com/niyaziacer/SlicerOpenMAPT1Auto)
+  produce.
+- **Auto (filename-based only)**: skips label-table lookup entirely and
+  only parses generic filename patterns (e.g. `right_amygdala.nii`) - use
+  this for the CLI tool's manual one-file-per-region workflow.
+
+**This choice matters and is never auto-detected**: both volBrain and
+OpenMAP-T1 name raw imported segments `Segment_<N>`, but the same number N
+means a completely different region in each scheme (e.g. N=47 is "Right
+Hippocampus" in volBrain but the left entorhinal area in OpenMAP-T1) -
+picking the wrong scheme silently mislabels every region.
 
 ### Exporting results
 - **Save results to folder**: appends every Calculate/batch run to

@@ -20,29 +20,45 @@ import re
 import numpy as np
 
 
-def parse_roi_info(name):
+def parse_roi_info(name, label_scheme=None):
     """Derive a human-readable ROI name and hemisphere from a segment/file name.
 
     Examples:
-        caudate_L            -> ("Caudate", "Left")
-        right_amygdala        -> ("Amygdala", "Right")
-        thalamus_R            -> ("Thalamus", "Right")
-        Segment_47             -> ("Hippocampus", "Right")  (volBrain native_structures label)
+        caudate_L                    -> ("Caudate", "Left")
+        right_amygdala                -> ("Amygdala", "Right")
+        thalamus_R                    -> ("Thalamus", "Right")
+        Segment_47, label_scheme="volbrain"   -> ("Hippocampus", "Right")
+        Segment_75, label_scheme="openmapt1"  -> ("Hippo", "Left")
 
-    Segments coming from a volBrain native_structures*.nii.gz multi-label
-    volume imported into Slicer without a color table are named "Segment_<N>"
-    by Slicer, where N is the original label value - try resolving that via
-    the volBrain label table first, before falling back to the generic
-    filename-pattern parsing below (which is what the manual, one-file-per-
-    region CLI workflow produces).
+    label_scheme selects which multi-label atlas table (if any) to use for
+    resolving Slicer's auto-generated "Segment_<N>" names (N = the raw
+    integer label value): None (skip straight to the generic filename
+    parsing below), "volbrain" (volBrain's native_structures table), or
+    "openmapt1" (OpenMAP-T1's Type1 Level5 table).
+
+    This MUST be chosen explicitly rather than auto-detected: volBrain and
+    OpenMAP-T1 both produce segments named "Segment_<N>" when imported
+    without a color table, but the same N means a different region in each
+    scheme (e.g. N=47 is "Right Hippocampus" in volBrain but the left
+    entorhinal area ("ENT_L") in OpenMAP-T1) - guessing wrong would silently
+    mislabel every region.
     """
-    try:
-        from volbrain_labels import lookup_structure_label
-        volbrain_match = lookup_structure_label(name)
-        if volbrain_match is not None:
-            return volbrain_match
-    except ImportError:
-        pass
+    if label_scheme == "volbrain":
+        try:
+            from volbrain_labels import lookup_structure_label
+            match = lookup_structure_label(name)
+            if match is not None:
+                return match
+        except ImportError:
+            pass
+    elif label_scheme == "openmapt1":
+        try:
+            from openmap_labels import lookup_structure_label
+            match = lookup_structure_label(name)
+            if match is not None:
+                return match
+        except ImportError:
+            pass
 
     name = re.sub(r"\.nii(\.gz)?$", "", name, flags=re.IGNORECASE)
     lname = name.lower()
